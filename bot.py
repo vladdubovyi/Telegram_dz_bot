@@ -2,26 +2,34 @@ import config
 import logging
 import db
 
+from aiogram.contrib.fsm_storage.memory import MemoryStorage
+from aiogram.dispatcher import FSMContext
+from aiogram.dispatcher.filters.state import State, StatesGroup
 from aiogram import Bot, Dispatcher, executor, types
 
 		# Подключение бота
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=config.API_TOKEN)
-dp = Dispatcher(bot=bot)
+dp = Dispatcher(bot=bot, storage=MemoryStorage())
 db_w = db._db()
 
+available_subjects = ["физика", "алгебра", "геометрия", "география", 
+					  "химия", "биология", "ист. укр.", "всесв. ист.",
+					  "укр. м.", "укр. лит.", "зар. лит.", "физра", "англ. м.", "информатика"]
+
 		# Вывод инфы
-@dp.message_handler(commands=['start'])
+@dp.message_handler(commands=['start'], state="*")
 async def welcome(message: types.Message):
 	sti = open('src/welcome_sti.webp', 'rb')
 	await bot.send_sticker(message.chat.id, sti)
-	await message.answer('Здраствуйте ' + str(message.from_user.first_name) + '!\nДля получения домашнего задания - /senddz [Предмет] [Дата]\nДля получения помощи напишите - /help')
+	await message.answer('Здраствуйте ' + str(message.from_user.first_name) + '!\nДля получения домашнего задания - /senddz\nДля получения помощи напишите - /help')
 
-@dp.message_handler(commands=['help', 'h', '-h'])
+@dp.message_handler(commands=['help', 'h', '-h'], state="*")
 async def help(message: types.Message):
-	await message.answer('Доступные команды:\n/senddz [Предмет] [Дата] - получить домашнее задание.\n'
+	await message.answer('Доступные команды:\n/senddz - получить домашнее задание.\n'
 		'/add_dz [Предмет] [Дата] [Домашка] - добавить домашнее задание\n/schedule - показать расписание\n'
 		'/reg - зарегистрировать пользователя\n/verify [Код] - изменить статус пользователя')
+	await message.answer("Доступные предметы: " + str(available_subjects))
 
 @dp.message_handler(commands=['schedule'])
 async def sched(message: types.Message):
@@ -32,20 +40,9 @@ async def sched(message: types.Message):
 		"Пятница:\n1. Физра\n2. Алгебра\n3. Геометрия")
 
 		# Работа с БД
-# Вывод домашки
-@dp.message_handler(commands=['senddz', 'sentdz', 'sentddd'])
-async def send_dz(message: types.Message):
-	command = message.text
-	command = command.split()
-	if len(command) != 3:
-		await message.answer("Неверная запись!\nПример: /senddz Физика 2020-12-14")
-	else:
-		subj = command[1]
-		date = command[2]
-		await message.answer(db_w.find_dz(subj, date))
 
 # Регистрация пользователя
-@dp.message_handler(commands=['reg'])
+@dp.message_handler(commands=['reg'], state="*")
 async def reg(message: types.Message):
 	if (db_w.user_exists(message.from_user.id)):
 		await message.answer("Вы уже зарегистрированы!")
@@ -54,7 +51,7 @@ async def reg(message: types.Message):
 		await message.answer("Вы успешно были зарегистрированы!")
 
 # Подтверждение пользователя
-@dp.message_handler(commands=['verify', 'ver', 'vrf', 'vf'])
+@dp.message_handler(commands=['verify', 'ver', 'vrf', 'vf'], state="*")
 async def verify(message: types.Message):
 	command = message.text
 	command = command.split()
@@ -67,28 +64,74 @@ async def verify(message: types.Message):
 			await message.answer("Введен неправильный код!")
 
 # Добавление домашнего задания
-@dp.message_handler(commands=['add_dz', 'adddz', 'addz'])
+class AddDz(StatesGroup):
+	state_subj = State()
+	state_date = State()
+	state_hw = State()
+
+
+@dp.message_handler(commands=['add_dz', 'adddz', 'addz'], state="*")
 async def add_dz(message: types.Message):
+	await message.answer("Введите предмет(Физика, Химия, Биология, ...):")
 	if(db_w.check_status(message.from_user.id, 1)):
-		command = message.text
-		command = command.split()
-		if len(command) == 4 or len(command) == 3:
-			subj = command[1]
-			date = command[2]
-			homework_text = command[3]
-			db_w.add_dz(subj, homework_text, date)
-			await message.answer("Домашнее задание было успешно добавлено!")
-		else:
-			await message.answer("Неверная запись!\nПример: /add_dz Физика 2020-12-14 #12.13-12.21")
+		await AddDz.state_subj.set()
 	else:
 		await message.answer("У вас недостаточно прав!")
 
+@dp.message_handler(state = AddDz.state_subj)
+async def add_dz_subj(message :types.Message, state = FSMContext):
+	if message.text.lower() not in available_subjects:
+		await message.reply("Недоступный предмет! Для получения полного списка предметов введите - /help")
+		return
+	else:
+		await message.answer("Введите дату(YYYY-MM-DD, Пример: 2020-12-14):")
+		await state.update_data(subject = message.text.lower())
+		await AddDz.next()
+
+@dp.message_handler(state = AddDz.state_date)
+async def send_dz_date(message: types.Message, state=FSMContext):
+	await state.update_data(date = message.text.lower())
+	await message.answer("Введите домашнее задание: ")
+	await AddDz.next()
+
+@dp.message_handler(state = AddDz.state_hw)
+async def send_dz_hw(message: types.Message, state=FSMContext):
+	cur_state = await state.get_data()
+	db_w.add_dz(cur_state['subject'], message.text, cur_state['date'])
+	await message.answer("Домашнее задание было успешно добавлено!")
+	await state.finish()
+
+# Вывод домашнего задания
+class SendDz(StatesGroup):
+	state_subj = State()
+	state_date = State()
+
+@dp.message_handler(commands=['senddz', 'sentdz', 'senddd'], state="*")
+async def send_dz(message: types.Message):
+	await message.answer("Введите предмет(Физика, Химия, Биология, ...):")
+	await SendDz.state_subj.set()
+
+@dp.message_handler(state = SendDz.state_subj)
+async def send_dz_subj(message: types.Message, state=FSMContext):
+	if message.text.lower() not in available_subjects:
+		await message.reply("Недоступный предмет! Для получения полного списка предметов введите - /help")
+		return
+	else:
+		await message.answer("Введите дату(YYYY-MM-DD, Пример: 2020-12-14):")
+		await state.update_data(subject = message.text.lower())
+		await SendDz.next()
+
+@dp.message_handler(state = SendDz.state_date)
+async def send_dz_date(message: types.Message, state=FSMContext):
+	subject = await state.get_data()
+	await message.answer(db_w.find_dz(subject['subject'], message.text.lower()))
+	await state.finish()
+	
 
 # На необработаеные случаи
 @dp.message_handler()
 async def er_mes(message: types.Message):
 	await message.answer("Я вас не понимаю!")
-
 
 
 if __name__ == '__main__':
