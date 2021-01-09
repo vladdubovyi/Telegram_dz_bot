@@ -89,13 +89,13 @@ async def add_dz_subj(message :types.Message, state = FSMContext):
 		await AddDz.next()
 
 @dp.message_handler(state = AddDz.state_date)
-async def send_dz_date(message: types.Message, state=FSMContext):
+async def add_dz_date(message: types.Message, state=FSMContext):
 	await state.update_data(date = message.text.lower())
 	await message.answer("Введите домашнее задание: ")
 	await AddDz.next()
 
 @dp.message_handler(state = AddDz.state_hw)
-async def send_dz_hw(message: types.Message, state=FSMContext):
+async def add_dz_hw(message: types.Message, state=FSMContext):
 	cur_state = await state.get_data()
 	db_w.add_dz(cur_state['subject'], message.text, cur_state['date'])
 	await message.answer("Домашнее задание было успешно добавлено!")
@@ -127,6 +127,79 @@ async def send_dz_date(message: types.Message, state=FSMContext):
 	await message.answer(db_w.find_dz(subject['subject'], message.text.lower()))
 	await state.finish()
 	
+# Удаление домашнего задания
+class DeleteDz(StatesGroup):
+	state_subj = State()
+	state_date = State()
+
+@dp.message_handler(commands=['delete', 'del','deldz'], state="*")
+async def del_dz(message: types.Message):
+	await message.answer("Введите предмет(Физика, Химия, Биология, ...): ")
+	await DeleteDz.state_subj.set()
+
+@dp.message_handler(state = DeleteDz.state_subj)
+async def del_dz_subj(message: types.Message, state=FSMContext):
+	if message.text.lower() not in available_subjects:
+		await message.reply("Недоступный предмет! Для получения полного списка предметов введите - /help")
+		return
+	else:
+		await message.answer("Введите дату(YYYY-MM-DD, Пример: 2020-12-14):")
+		await state.update_data(subject = message.text.lower())
+		await DeleteDz.next()
+
+@dp.message_handler(state = DeleteDz.state_date)
+async def del_dz_date(message: types.Message, state=FSMContext):
+	subject = await state.get_data()
+	db_w.del_dz(subject['subject'], message.text.lower())
+	await message.answer("Домашнее задание по " + subject['subject'] + " было успешно удалено!")
+	await state.finish()
+
+# Изминение домашнего задания
+class ChangeDz(StatesGroup):
+	state_subj = State()
+	state_date = State()
+	state_pre_final = State()
+	state_final = State()
+
+@dp.message_handler(commands=['change', 'chg','chg_dz'], state="*")
+async def chg_dz(message: types.Message):
+	await message.answer("Введите предмет(Физика, Химия, Биология, ...): ")
+	await ChangeDz.state_subj.set()
+
+@dp.message_handler(state = ChangeDz.state_subj)
+async def chg_dz_subj(message: types.Message, state=FSMContext):
+	if message.text.lower() not in available_subjects:
+		await message.reply("Недоступный предмет! Для получения полного списка предметов введите - /help")
+		return
+	else:
+		await message.answer("Введите дату(YYYY-MM-DD, Пример: 2020-12-14):")
+		await state.update_data(subject = message.text.lower())
+		await ChangeDz.next()
+
+@dp.message_handler(state = ChangeDz.state_date)
+async def chg_dz_date(message: types.Message, state=FSMContext):
+	subject = await state.get_data()
+	await message.answer(db_w.find_dz(subject['subject'], message.text.lower()) + "\nВы точно хотите его изменить?")
+	await state.update_data(date = message.text.lower())
+	await ChangeDz.next()
+
+@dp.message_handler(state = ChangeDz.state_pre_final)
+async def chg_dz_final(message: types.Message, state=FSMContext):
+	if message.text.lower() in ['да', '1', 'д']:
+		info = await state.get_data()
+		await message.answer("Введите новое домашнее задание по " + info['subject'] + " за " + info['date'])
+		await ChangeDz.next()
+	else:
+		await message.answer("Домашнее задание не было изменено!")
+		await state.finish()
+
+@dp.message_handler(state = ChangeDz.state_final)
+async def chg_dz_final(message: types.Message, state=FSMContext):
+	info = await state.get_data()
+	db_w.change_dz(info['subject'], info['date'], message.text)
+	await message.answer("Домашнее задание было успешно изменено!")
+	await state.finish()
+
 
 # На необработаеные случаи
 @dp.message_handler()

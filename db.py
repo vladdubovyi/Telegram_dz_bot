@@ -61,4 +61,13 @@ class _db:
 	def add_dz(self, subject, homework, date = datetime.now()):
 		self.cur.execute("INSERT INTO homework(Subject, Homework_text, Date) VALUES (%s, %s, %s)", (subject, homework, date))
 		self.db.commit()
-			
+	
+	# Удаление домашнего задания	
+	def del_dz(self, subject, date):
+		self.cur.execute("DELETE FROM homework WHERE Subject = %s AND Date = %s", (subject, date))
+		self.db.commit()
+
+	# Изменение домашнего задания
+	def change_dz(self, subject, date, homework_text):
+		self.del_dz(subject, date)
+		self.add_dz(subject, homework_text, date) 
